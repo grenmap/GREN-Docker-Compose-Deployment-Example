@@ -1,0 +1,117 @@
+version: "3.8"
+
+services:
+  app:
+    image: ${IMAGE_DJANGO:?}:${IMAGE_DJANGO_TAG:?}
+    command: gunicorn base_app.wsgi:application --bind 0.0.0.0:8080 --log-level=info --threads 4
+    environment:
+      - SQL_ENGINE=django.db.backends.postgresql
+      - DATABASE=postgres
+      - SQL_HOST=${SQL_HOST:?}
+      - SQL_PORT=${SQL_PORT:?}
+      - POSTGRES_DB=${POSTGRES_DB:?}
+      - POSTGRES_USER=${POSTGRES_USER:?}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - SECRET_KEY_FILE=/run/secrets/secret_key
+      - REDIS_HOST=redis://redis:6379/1
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:?}
+      - ADMIN_EPPNS=${ADMIN_EPPNS:?}
+    secrets:
+      - db_password
+      - secret_key
+    volumes:
+      - static_volume:/home/grenmapadmin/web/staticfiles
+    expose:
+      - 8080
+    healthcheck:
+      test: curl --fail http://localhost:8080 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      - redis
+    restart: always
+
+  task_runner:
+    image: ${IMAGE_DJANGO:?}:${IMAGE_DJANGO_TAG:?}
+    command: python manage.py qcluster
+    entrypoint: ./task_runner.sh
+    environment:
+      - SQL_ENGINE=django.db.backends.postgresql
+      - DATABASE=postgres
+      - SQL_HOST=${SQL_HOST:?}
+      - SQL_PORT=${SQL_PORT:?}
+      - POSTGRES_DB=${POSTGRES_DB:?}
+      - POSTGRES_USER=${POSTGRES_USER:?}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - SECRET_KEY_FILE=/run/secrets/secret_key
+      - REDIS_HOST=redis://redis:6379/1
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:?}
+    secrets:
+      - db_password
+      - secret_key
+    depends_on:
+      - app
+      - redis
+    restart: always
+
+  db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:?}
+      - POSTGRES_USER=${POSTGRES_USER:?}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    restart: always
+    profiles:
+      - container_db
+
+  websp:
+    image: ${IMAGE_WEBSP:?}:${IMAGE_WEBSP_TAG:?}
+    environment:
+      - MAP_HOST_NAME=${MAP_HOST_NAME:?}
+      - MAP_HOST_PORT=${MAP_HOST_PORT:-443}
+      - IDP_SSO=${IDP_SSO:?}
+      - METADATA_PROVIDERS=${METADATA_PROVIDERS:?}
+    secrets:
+      - websp-host-key
+      - websp-host-cert
+      - websp-sp-key
+      - websp-sp-cert
+    ports:
+      - ${MAP_HOST_PORT:-443}:8443
+    volumes:
+      - static_volume:/home/grenmapadmin/web/staticfiles
+      # update and uncomment the following line for customized EDS logo
+      # - ./config/CAFLogo.png:/var/www/html/shibboleth-ds/eds_logo.png
+    depends_on:
+      - app
+    restart: always
+
+  redis:
+    image: bitnami/redis:7.0
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    restart: always
+
+volumes:
+  postgres_data:
+  static_volume:
+
+secrets:
+  websp-host-key:
+    file: ./config/host-key.pem
+  websp-host-cert:
+    file: ./config/host-cert.pem
+  websp-sp-key:
+    file: ./config/sp-key.pem
+  websp-sp-cert:
+    file: ./config/sp-cert.pem
+  db_password:
+     file: ./config/db_password.txt
+  secret_key:
+     file: ./config/secret_key.txt
+  
